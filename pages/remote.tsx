@@ -8,7 +8,6 @@ export default function Remote() {
   const [selectedButton, setSelectedButton] = useState<'A' | 'B'>('A');
   const [uploadedMedia, setUploadedMedia] = useState<{ [key: string]: { name: string, type: string } }>({});
   const [isUploading, setIsUploading] = useState(false);
-  const [mediaTypeSelection, setMediaTypeSelection] = useState<'auto' | 'image' | 'video'>('auto');
 
   useEffect(() => {
     const connectMQTT = async () => {
@@ -43,11 +42,12 @@ export default function Remote() {
     }
   };
 
-  const processMediaUrl = (url: string, selectedType: 'auto' | 'image' | 'video'): { processedUrl: string, fileType: string, mediaType: 'image' | 'video' } => {
+  const processMediaUrl = (url: string): { processedUrl: string, fileType: string, mediaType: 'image' | 'video' } => {
     let processedUrl = url;
     let fileType = 'image/jpeg';
     let mediaType: 'image' | 'video' = 'image';
-    
+
+    // Handle YouTube URLs (video only)
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
       const videoId = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/)?.[1];
       if (videoId) {
@@ -56,25 +56,30 @@ export default function Remote() {
         mediaType = 'video';
       }
     }
+    // Handle Google Drive URLs
     else if (url.includes('drive.google.com')) {
       const fileId = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
       if (fileId) {
-        if (selectedType === 'image' || (selectedType === 'auto' && url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i))) {
+        // Check if it's an image based on URL or file extension (if available)
+        if (url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)) {
           processedUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
           fileType = url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)?.[0] || 'image/jpeg';
           mediaType = 'image';
         } else {
+          // Assume video for Google Drive
           processedUrl = `https://drive.google.com/file/d/${fileId}/preview?autoplay=1`;
           fileType = 'video/mp4';
           mediaType = 'video';
         }
       }
     }
-    else if (selectedType === 'video' || (selectedType === 'auto' && url.match(/\.(mp4|webm|mov|avi|mkv|ogv)$/i))) {
+    // Handle other video formats
+    else if (url.match(/\.(mp4|webm|mov|avi|mkv|ogv)$/i)) {
       fileType = 'video/mp4';
       mediaType = 'video';
     }
-    else if (selectedType === 'image' || (selectedType === 'auto' && url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i))) {
+    // Handle other image formats
+    else if (url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)) {
       fileType = url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)?.[0] || 'image/jpeg';
       mediaType = 'image';
     }
@@ -96,11 +101,11 @@ export default function Remote() {
     setIsUploading(true);
 
     try {
-      const { processedUrl, fileType, mediaType } = processMediaUrl(mediaUrl, mediaTypeSelection);
+      const { processedUrl, fileType, mediaType } = processMediaUrl(mediaUrl);
       const message: FileMessage = {
         button: selectedButton,
         fileName: mediaUrl.split('/').pop() || 'media',
-        fileContent: processedUrl,
+        fileContent: processedUrl, // Simpan URL yang telah diproses
         fileType,
         mediaType,
         timestamp: Date.now(),
@@ -149,7 +154,7 @@ export default function Remote() {
             <div className="font-bold">Button A</div>
             {uploadedMedia['A'] && (
               <div className="text-xs mt-1 opacity-75">
-                {uploadedMedia['A'].type === 'video'}
+                {uploadedMedia['A'].type}
               </div>
             )}
           </div>
@@ -160,11 +165,11 @@ export default function Remote() {
             <div className="font-bold">Button B</div>
             {uploadedMedia['B'] && (
               <div className="text-xs mt-1 opacity-75">
-                {uploadedMedia['B'].type === 'video'} {uploadedMedia['B'].name}
+                {uploadedMedia['B'].type}
               </div>
             )}
           </div>
-        </div>
+        </div>        
       </div>
 
       <div className="border-t border-gray-700 pt-6">
@@ -176,19 +181,9 @@ export default function Remote() {
             value={mediaUrl}
             onChange={(e) => setMediaUrl(e.target.value)}
             placeholder="Enter media URL"
-            className="bg-gray-800 text-white px-4 py-2 rounded w-full max-w-md mb-2"
-            disabled={isUploading}
-          />
-          <select
-            value={mediaTypeSelection}
-            onChange={(e) => setMediaTypeSelection(e.target.value as 'auto' | 'image' | 'video')}
             className="bg-gray-800 text-white px-4 py-2 rounded w-full max-w-md"
             disabled={isUploading}
-          >
-            <option value="auto">Auto Detect</option>
-            <option value="image">Image</option>
-            <option value="video">Video</option>
-          </select>
+          />
         </div>
         
         <button
@@ -197,8 +192,8 @@ export default function Remote() {
           className={`px-6 py-3 text-white font-semibold rounded transition-all ${mediaUrl && isConnected && !isUploading ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer shadow-lg' : 'bg-gray-600 cursor-not-allowed opacity-50'}`}
         >
           {isUploading ? 'Uploading...' : `Upload URL to Button ${selectedButton}`}
-        </button>              
-      </div>
+        </button>        
+      </div>      
     </div>
   );
 }
