@@ -1,115 +1,166 @@
-import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
+import { useState, useEffect, useCallback } from 'react';
+import { mqttClient, FileMessage, ButtonControlMessage } from '@/lib/mqtt';
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+export default function Display() {
+  const [isConnected, setIsConnected] = useState(false);
+  const [buttonMedia, setButtonMedia] = useState<{ [key: string]: FileMessage }>({});
+  const [currentDisplay, setCurrentDisplay] = useState<FileMessage | null>(null);
+  const [selectedButton, setSelectedButton] = useState<'A' | 'B'>('A');
+  const [status, setStatus] = useState('Connecting to MQTT...');
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+  const handleMQTTMessage = useCallback((message: string, topic: string) => {
+    try {
+      const data = JSON.parse(message);
+      if (topic === 'home/buttonControl') {
+        const controlData: ButtonControlMessage = data;
+        setSelectedButton(controlData.activeButton);
+      } else {
+        const mediaData: FileMessage = data;
+        if (mediaData.button && mediaData.fileContent && mediaData.fileType) {
+          setButtonMedia(prev => ({
+            ...prev,
+            [mediaData.button]: mediaData
+          }));
+          setStatus('Connected - Media loaded');
+        }
+      }
+    } catch (error) {
+      console.error('Error parsing message:', error, 'Raw message:', message.substring(0, 100));
+    }
+  }, []);
 
-export default function Home() {
-  return (
-    <div
-      className={`${geistSans.className} ${geistMono.className} font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20`}
-    >
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              pages/index.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    const connectAndSubscribe = async () => {
+      try {
+        setStatus('Connecting to MQTT...');
+        await mqttClient.connect();
+        setIsConnected(true);
+        setStatus('Connected - Waiting for input...');
+
+        await mqttClient.subscribe('home/buttonA', handleMQTTMessage);
+        await mqttClient.subscribe('home/buttonB', handleMQTTMessage);
+        await mqttClient.subscribe('home/buttonControl', handleMQTTMessage);
+      } catch (error) {
+        setStatus('MQTT Connection Failed - Check broker settings');
+        setIsConnected(false);
+        console.error('MQTT Error:', error);
+      }
+    };
+
+    connectAndSubscribe();
+
+    return () => {
+      mqttClient.unsubscribe('home/buttonA', handleMQTTMessage);
+      mqttClient.unsubscribe('home/buttonB', handleMQTTMessage);
+      mqttClient.unsubscribe('home/buttonControl', handleMQTTMessage);
+    };
+  }, [handleMQTTMessage]);
+
+  useEffect(() => {
+    if (buttonMedia[selectedButton]) {
+      setCurrentDisplay(buttonMedia[selectedButton]);
+    } else {
+      setCurrentDisplay(null);
+    }
+  }, [selectedButton, buttonMedia]);
+
+  const renderContent = () => {
+    if (!currentDisplay) {
+      return (
+        <div className="text-white text-xl text-center">
+          {!isConnected ? (
+            <div>
+              <div className="mb-2">MQTT Connection Issue</div>
+              <div className="text-sm text-gray-400">
+                Check if MQTT broker supports WebSocket
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-4">Waiting for input...</div>
+              <div className="text-lg">Current Button: <span className="text-cyan-400">{selectedButton}</span></div>
+              <div className="text-sm text-gray-400 mt-2">
+                Available media: {Object.keys(buttonMedia).join(', ') || 'None'}
+              </div>
+            </div>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+      );
+    }
+
+    const mediaUrl = currentDisplay.fileContent;
+    const isVideo = currentDisplay.mediaType === 'video' || currentDisplay.fileType.startsWith('video/');
+    const isYouTube = currentDisplay.fileType === 'video/youtube';
+
+    return (
+      <div className="w-full max-w-6xl">        
+        <div className="flex justify-center">
+          {isVideo ? (
+            isYouTube ? (
+              <iframe
+                src={mediaUrl}
+                width="100%"
+                height="100%"
+                className="max-w-full max-h-[80vh] h-auto rounded-lg shadow-lg"
+                allow="autoplay; encrypted-media"
+                allowFullScreen
+                onLoad={() => console.log('YouTube video loaded successfully')}
+                onError={(e) => console.error('YouTube video load error:', e)}
+              ></iframe>
+            ) : (
+              <video
+                src={mediaUrl}
+                controls
+                autoPlay
+                muted
+                loop
+                className="max-w-full max-h-[80vh] h-auto rounded-lg shadow-lg"
+                onLoadStart={() => console.log('Video loading started')}
+                onLoadedData={() => console.log('Video loaded successfully')}
+                onError={(e) => console.error('Video load error:', e)}
+              >
+                Your browser does not support the video tag.
+              </video>
+            )
+          ) : (
+            <img
+              src={mediaUrl}
+              alt={currentDisplay.fileName}
+              className="max-w-full max-h-[80vh] h-auto rounded-lg shadow-lg"
+              onLoad={() => console.log('Image loaded successfully')}
+              onError={(e) => console.error('Image load error:', e)}
+            />
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-black text-white min-h-screen p-6">
+      <div className="flex justify-between items-center mb-8">
+        <h1 className="text-white text-2xl">Media Display</h1>
+        <div className={`text-sm px-3 py-1 rounded ${isConnected ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'}`}>
+          {status}
+        </div>
+      </div>
+
+      <div className="flex gap-4 mb-8 justify-center">
+        <div
+          className={`border-2 rounded px-4 py-2 ${selectedButton === 'A' ? 'border-cyan-400 bg-cyan-400 text-black' : 'border-gray-600 text-gray-400'}`}
         >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          Button A {buttonMedia['A'] ? (buttonMedia['A'].mediaType === 'video' || buttonMedia['A'].fileType.startsWith('video/')) : '○'}
+        </div>
+        <div
+          className={`border-2 rounded px-4 py-2 ${selectedButton === 'B' ? 'border-cyan-400 bg-cyan-400 text-black' : 'border-gray-600 text-gray-400'}`}
         >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          Button B {buttonMedia['B'] ? (buttonMedia['B'].mediaType === 'video' || buttonMedia['B'].fileType.startsWith('video/')) : '○'}
+        </div>
+      </div>
+      
+      <div className="flex items-center justify-center min-h-96">
+        {renderContent()}
+      </div>
     </div>
   );
 }
