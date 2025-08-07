@@ -1,13 +1,19 @@
-import { useState, useEffect } from 'react';
-import { mqttClient, FileMessage } from '@/lib/mqtt';
+import { useState, useEffect, useRef } from 'react';
+import { mqttClient, FileMessage, MediaControlMessage } from '@/lib/mqtt';
 
 export default function Remote() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('Connecting to MQTT...');
-  const [mediaUrl, setMediaUrl] = useState('');
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [connectionStatus, setConnectionStatus] = useState<string>('Connecting to MQTT...');
   const [selectedButton, setSelectedButton] = useState<'A' | 'B'>('A');
-  const [uploadedMedia, setUploadedMedia] = useState<{ [key: string]: { name: string, type: string } }>({});
-  const [isUploading, setIsUploading] = useState(false);
+  const [uploadedMedia, setUploadedMedia] = useState<{
+    [key: string]: {
+      name: string[];
+      type: string;
+      isPlaying?: boolean;
+    };
+  }>({});
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const connectMQTT = async () => {
@@ -36,62 +42,25 @@ export default function Remote() {
     if (isConnected) {
       try {
         await mqttClient.publishButtonControl(button);
+        if (uploadedMedia[button]?.type === 'video' && !uploadedMedia[button].isPlaying) {
+          await mqttClient.publishMediaControl(button, 'play');
+          setUploadedMedia((prev) => ({
+            ...prev,
+            [button]: {
+              ...prev[button],
+              isPlaying: true,
+            },
+          }));
+        }
       } catch (error) {
         console.error('Error sending button control:', error);
       }
     }
   };
 
-  const processMediaUrl = (url: string): { processedUrl: string, fileType: string, mediaType: 'image' | 'video' } => {
-    let processedUrl = url;
-    let fileType = 'image/jpeg';
-    let mediaType: 'image' | 'video' = 'image';
-
-    // Handle YouTube URLs (video only)
-    if (url.includes('youtube.com') || url.includes('youtu.be')) {
-      const videoId = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/)?.[1];
-      if (videoId) {
-        processedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1`;
-        fileType = 'video/youtube';
-        mediaType = 'video';
-      }
-    }
-    // Handle Google Drive URLs
-    else if (url.includes('drive.google.com')) {
-      const fileId = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-      if (fileId) {
-        // Check if it's an image based on URL or file extension (if available)
-        if (url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)) {
-          processedUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
-          fileType = url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)?.[0] || 'image/jpeg';
-          mediaType = 'image';
-        } else {
-          // Assume video for Google Drive
-          processedUrl = `https://drive.google.com/file/d/${fileId}/preview?autoplay=1`;
-          fileType = 'video/mp4';
-          mediaType = 'video';
-        }
-      }
-    }
-    // Handle other video formats
-    else if (url.match(/\.(mp4|webm|mov|avi|mkv|ogv)$/i)) {
-      fileType = 'video/mp4';
-      mediaType = 'video';
-    }
-    // Handle other image formats
-    else if (url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)) {
-      fileType = url.match(/\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i)?.[0] || 'image/jpeg';
-      mediaType = 'image';
-    }
-
-    return { processedUrl, fileType, mediaType };
-  };
-
-  const handleMediaUpload = async () => {
-    if (!mediaUrl) {
-      alert('Please enter a media URL');
-      return;
-    }
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
     if (!isConnected) {
       alert(`MQTT not connected. Status: ${connectionStatus}`);
@@ -101,99 +70,287 @@ export default function Remote() {
     setIsUploading(true);
 
     try {
-      const { processedUrl, fileType, mediaType } = processMediaUrl(mediaUrl);
+      let mediaType: 'image' | 'video' | 'text' | 'pdf' = 'text';
+      let fileNames: string[] = [];
+      let fileContents: string[] = [];
+
+      for (const file of Array.from(files)) {
+        if (file.type.startsWith('image/')) {
+          mediaType = 'image';
+          const localUrl = URL.createObjectURL(file);
+          fileNames.push(file.name);
+          fileContents.push(localUrl);
+        } else if (file.type.startsWith('video/')) {
+          mediaType = 'video';
+          const localUrl = URL.createObjectURL(file);
+          fileNames.push(file.name);
+          fileContents.push(localUrl);
+        } else if (file.type === 'application/pdf') {
+          mediaType = 'pdf';
+          const localUrl = URL.createObjectURL(file);
+          fileNames.push(file.name);
+          fileContents.push(localUrl);
+        } else {
+          mediaType = 'text';
+          const text = await file.text();
+          fileNames.push(file.name);
+          fileContents.push(text);
+        }
+      }
+
       const message: FileMessage = {
         button: selectedButton,
-        fileName: mediaUrl.split('/').pop() || 'media',
-        fileContent: processedUrl, // Simpan URL yang telah diproses
-        fileType,
+        fileName: fileNames,
+        fileContent: fileContents,
+        fileType: files[0].type,
         mediaType,
         timestamp: Date.now(),
+        isLocalFile: true,
+        filePath: fileNames.join(','),
       };
 
       const topic = `home/button${selectedButton}`;
       await mqttClient.publish(topic, JSON.stringify(message));
 
-      setUploadedMedia(prev => ({
+      setUploadedMedia((prev) => ({
         ...prev,
         [selectedButton]: {
-          name: message.fileName,
+          name: fileNames,
           type: mediaType,
+          isPlaying: mediaType === 'video' ? true : false,
         },
       }));
 
-      setMediaUrl('');
-      setConnectionStatus('MQTT Connected');
-      alert(`${mediaType === 'video' ? 'Video' : 'Image'} URL uploaded successfully to Button ${selectedButton}`);
+      if (mediaType === 'video') {
+        await mqttClient.publishMediaControl(selectedButton, 'play');
+      }
+
+      alert(`${mediaType} loaded successfully to Button ${selectedButton}`);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     } catch (error) {
-      console.error('Error sending media:', error);
-      alert('Error sending media URL');
-      setConnectionStatus('Upload failed - MQTT Connected');
+      console.error('Error loading file:', error);
+      alert('Error loading file');
     } finally {
       setIsUploading(false);
     }
   };
 
+  const handleMediaControl = async (action: MediaControlMessage['action'], value?: number) => {
+    if (!isConnected) {
+      alert('MQTT not connected');
+      return;
+    }
+
+    try {
+      await mqttClient.publishMediaControl(selectedButton, action, value);
+
+      if (action === 'play' || action === 'pause') {
+        setUploadedMedia((prev) => ({
+          ...prev,
+          [selectedButton]: {
+            ...prev[selectedButton],
+            isPlaying: action === 'play',
+          },
+        }));
+      }
+    } catch (error) {
+      console.error('Error sending media control:', error);
+      alert('Error sending media control');
+    }
+  };
+
   return (
-    <div className="bg-black text-white min-h-screen p-6">
-      <h1 className="text-white text-2xl mb-4">Media Remote Control</h1>
-      
-      <div className="mb-6">
-        <div className={`text-sm px-3 py-1 rounded ${isConnected ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'}`}>
+    <div className="bg-black text-white min-h-screen p-5">
+      <h1 className="text-center mb-5 text-2xl">Media Remote Control</h1>
+
+      <div className="text-center mb-8">
+        <div
+          className={`inline-block px-4 py-2 rounded-md text-sm ${
+            isConnected ? 'bg-green-800' : 'bg-red-800'
+          }`}
+        >
           Status: {connectionStatus}
         </div>
       </div>
-      
+
       <div className="mb-8">
-        <h2 className="text-xl mb-4">Button Control</h2>
-        <div className="flex gap-4 mb-4">
+        <h2 className="mb-4">Button Control</h2>
+        <div className="flex gap-4 justify-center mb-5">
           <div
-            className={`border-2 rounded px-6 py-3 cursor-pointer transition-all ${selectedButton === 'A' ? 'border-cyan-400 bg-cyan-400 text-black shadow-lg' : 'border-white text-white hover:border-cyan-400'}`}
+            className={`border-2 rounded-md p-4 cursor-pointer ${
+              selectedButton === 'A'
+                ? 'border-cyan-400 bg-teal-900'
+                : 'border-gray-600 bg-gray-800'
+            }`}
             onClick={() => handleButtonChange('A')}
           >
-            <div className="font-bold">Button A</div>
-            {uploadedMedia['A'] && (
-              <div className="text-xs mt-1 opacity-75">
-                {uploadedMedia['A'].type}
-              </div>
-            )}
+            <div className="font-bold text-base">Button A</div>
           </div>
           <div
-            className={`border-2 rounded px-6 py-3 cursor-pointer transition-all ${selectedButton === 'B' ? 'border-cyan-400 bg-cyan-400 text-black shadow-lg' : 'border-white text-white hover:border-cyan-400'}`}
+            className="border-2 rounded-md p-4 cursor-pointer ${
+              selectedButton === 'B'
+                ? 'border-cyan-400 bg-teal-900'
+                : 'border-gray-600 bg-gray-800'
+            }"
             onClick={() => handleButtonChange('B')}
           >
-            <div className="font-bold">Button B</div>
-            {uploadedMedia['B'] && (
-              <div className="text-xs mt-1 opacity-75">
-                {uploadedMedia['B'].type}
-              </div>
-            )}
+            <div className="font-bold text-base">Button B</div>
           </div>
-        </div>        
+        </div>
       </div>
 
-      <div className="border-t border-gray-700 pt-6">
-        <h2 className="text-xl mb-4">Upload Media URL to Button {selectedButton}</h2>
-        
-        <div className="mb-4">
+      {uploadedMedia[selectedButton] && (
+        <div className="p-5 mb-8">
+          {uploadedMedia[selectedButton].type === 'video' && (
+            <div className="mb-5">
+              <h4 className="mb-2">Video Controls</h4>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => handleMediaControl('play')}
+                  disabled={uploadedMedia[selectedButton].isPlaying}
+                  className={`px-4 py-2 rounded-sm text-white ${
+                    uploadedMedia[selectedButton].isPlaying
+                      ? 'cursor-not-allowed'
+                      : 'bg-green-800'
+                  }`}
+                >
+                  Play
+                </button>
+                <button
+                  onClick={() => handleMediaControl('pause')}
+                  disabled={!uploadedMedia[selectedButton].isPlaying}
+                  className={`px-4 py-2 rounded-sm text-white ${
+                    !uploadedMedia[selectedButton].isPlaying
+                      ? 'cursor-not-allowed'
+                      : 'bg-red-800'
+                  }`}
+                >
+                  Pause
+                </button>
+                <button
+                  onClick={() => handleMediaControl('seek_backward', 10)}
+                  className="px-4 py-2 bg-blue-800 text-white rounded-sm"
+                >
+                  -10s
+                </button>
+                <button
+                  onClick={() => handleMediaControl('seek_forward', 10)}
+                  className="px-4 py-2 bg-blue-800 text-white rounded-sm"
+                >
+                  +10s
+                </button>
+              </div>
+            </div>
+          )}
+
+          {uploadedMedia[selectedButton].type === 'image' && (
+            <div className="mb-5">
+              <h4 className="mb-2">Scroll Controls</h4>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => handleMediaControl('scroll_stop')}
+                  className="px-4 py-2 bg-red-800 text-white rounded-sm"
+                >
+                  Stop Scroll
+                </button>
+                <button
+                  onClick={() => handleMediaControl('scroll_speed_up')}
+                  className="px-4 py-2 bg-blue-800 text-white rounded-sm"
+                >
+                  Speed Up
+                </button>
+                <button
+                  onClick={() => handleMediaControl('scroll_speed_down')}
+                  className="px-4 py-2 bg-blue-800 text-white rounded-sm"
+                >
+                  Slow Down
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="mb-5">
+            <h4 className="mb-2">Zoom Controls</h4>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => handleMediaControl('zoom_in')}
+                className="px-4 py-2 bg-blue-800 text-white rounded-sm"
+              >
+                Zoom In
+              </button>
+              <button
+                onClick={() => handleMediaControl('zoom_out')}
+                className="px-4 py-2 bg-blue-800 text-white rounded-sm"
+              >
+                Zoom Out
+              </button>
+              <button
+                onClick={() => handleMediaControl('zoom_reset')}
+                className="px-4 py-2 bg-red-700 text-white rounded-sm"
+              >
+                Reset Zoom
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-5">
+            <h4 className="mb-2">Navigation</h4>
+            <div className="grid grid-cols-3 gap-2 max-w-[150px] mx-auto">
+              <div></div>
+              <button
+                onClick={() => handleMediaControl('move_up')}
+                className="p-2 bg-blue-900 text-white rounded-sm"
+              >
+                ↑
+              </button>
+              <div></div>
+              <button
+                onClick={() => handleMediaControl('move_left')}
+                className="p-2 bg-blue-900 text-white rounded-sm"
+              >
+                ←
+              </button>
+              <button
+                onClick={() => handleMediaControl('move_reset')}
+                className="p-2 bg-gray-600 text-white rounded-sm text-xs"
+              >
+                Reset
+              </button>
+              <button
+                onClick={() => handleMediaControl('move_right')}
+                className="p-2 bg-blue-900 text-white rounded-sm"
+              >
+                →
+              </button>
+              <div></div>
+              <button
+                onClick={() => handleMediaControl('move_down')}
+                className="p-2 bg-blue-900 text-white rounded-sm"
+              >
+                ↓
+              </button>
+              <div></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="border-t border-gray-600 pt-5">
+        <h2 className="mb-4">Load File to Button {selectedButton}</h2>
+        <div className="text-center">
           <input
-            type="text"
-            value={mediaUrl}
-            onChange={(e) => setMediaUrl(e.target.value)}
-            placeholder="Enter media URL"
-            className="bg-gray-800 text-white px-4 py-2 rounded w-full max-w-md"
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileUpload}
+            accept="image/*,video/*,text/*,.txt,.md,.json,.csv,.html,.css,.js,.py,.pdf"
+            multiple
             disabled={isUploading}
+            className="p-2 rounded-sm border border-gray-600 bg-gray-700 text-white w-full max-w-md"
           />
         </div>
-        
-        <button
-          onClick={handleMediaUpload}
-          disabled={!mediaUrl || !isConnected || isUploading}
-          className={`px-6 py-3 text-white font-semibold rounded transition-all ${mediaUrl && isConnected && !isUploading ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer shadow-lg' : 'bg-gray-600 cursor-not-allowed opacity-50'}`}
-        >
-          {isUploading ? 'Uploading...' : `Upload URL to Button ${selectedButton}`}
-        </button>        
-      </div>      
+      </div>
     </div>
   );
 }

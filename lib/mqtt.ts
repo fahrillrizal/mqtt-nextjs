@@ -2,15 +2,39 @@ import mqtt from 'mqtt';
 
 export interface FileMessage {
   button: 'A' | 'B';
-  fileName: string;
-  fileContent: string;
+  fileName: string[];
+  fileContent: string[];
   fileType: string;
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'text' | 'pdf';
   timestamp: number;
+  isLocalFile?: boolean;
+  filePath?: string;
 }
 
 export interface ButtonControlMessage {
   activeButton: 'A' | 'B';
+  timestamp: number;
+}
+
+export interface MediaControlMessage {
+  button: 'A' | 'B';
+  action:
+    | 'play'
+    | 'pause'
+    | 'seek_forward'
+    | 'seek_backward'
+    | 'zoom_in'
+    | 'zoom_out'
+    | 'zoom_reset'
+    | 'move_up'
+    | 'move_down'
+    | 'move_left'
+    | 'move_right'
+    | 'move_reset'
+    | 'scroll_stop'
+    | 'scroll_speed_up'
+    | 'scroll_speed_down';
+  value?: number;
   timestamp: number;
 }
 
@@ -47,7 +71,7 @@ class MQTTClient {
         name: process.env.NEXT_PUBLIC_MQTT_BROKER_NAME,
         url: process.env.NEXT_PUBLIC_MQTT_BROKER_URL,
         options: {
-          clientId: `${process.env.NEXT_PUBLIC_MQTT_BROKER_NAME}_${Date.now()}_${Math.random()
+          clientId: `media_remote_${Date.now()}_${Math.random()
             .toString(16)
             .substr(2, 4)}`,
           clean: true,
@@ -114,7 +138,7 @@ class MQTTClient {
       const callbacks = this.subscribers.get(topic);
       if (callbacks) {
         const messageStr = message.toString();
-        callbacks.forEach(callback => callback(messageStr, topic));
+        callbacks.forEach((callback) => callback(messageStr, topic));
       }
     });
   }
@@ -192,9 +216,23 @@ class MQTTClient {
   async publishButtonControl(activeButton: 'A' | 'B'): Promise<void> {
     const message: ButtonControlMessage = {
       activeButton,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
     await this.publish('home/buttonControl', JSON.stringify(message));
+  }
+
+  async publishMediaControl(
+    button: 'A' | 'B',
+    action: MediaControlMessage['action'],
+    value?: number
+  ): Promise<void> {
+    const message: MediaControlMessage = {
+      button,
+      action,
+      value,
+      timestamp: Date.now(),
+    };
+    await this.publish('home/mediaControl', JSON.stringify(message));
   }
 }
 
