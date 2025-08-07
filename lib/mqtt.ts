@@ -33,7 +33,7 @@ class MQTTClient {
     }
 
     this.connectPromise = this.doConnect();
-    
+
     try {
       await this.connectPromise;
     } finally {
@@ -44,29 +44,20 @@ class MQTTClient {
   private async doConnect(): Promise<void> {
     const configs = [
       {
-        name: 'local_ws',
-        url: 'ws://localhost:8084/mqtt',
+        name: process.env.NEXT_PUBLIC_MQTT_BROKER_NAME,
+        url: process.env.NEXT_PUBLIC_MQTT_BROKER_URL,
         options: {
-          clientId: `local_${Date.now()}_${Math.random().toString(16).substr(2, 4)}`,
+          clientId: `${process.env.NEXT_PUBLIC_MQTT_BROKER_NAME}_${Date.now()}_${Math.random()
+            .toString(16)
+            .substr(2, 4)}`,
           clean: true,
           reconnectPeriod: 0,
           connectTimeout: 10000,
           keepalive: 60,
-        }
+          username: process.env.NEXT_PUBLIC_MQTT_USERNAME,
+          password: process.env.NEXT_PUBLIC_MQTT_PASSWORD,
+        },
       },
-      {
-        name: '204',
-        url: 'ws://204.48.28.161:8084/mqtt',
-        options: {
-          clientId: `204_${Date.now()}_${Math.random().toString(16).substr(2, 4)}`,
-          clean: true,
-          reconnectPeriod: 0,
-          connectTimeout: 10000,
-          keepalive: 60,
-          username: 'test',
-          password: 'test7',
-        }
-      }
     ];
 
     for (const config of configs) {
