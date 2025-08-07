@@ -168,7 +168,7 @@ export default function Display() {
             ...newState[button],
             position: {
               ...newState[button].position,
-              y: newState[button].position.y - moveDistance, // Move up in viewport
+              y: newState[button].position.y - moveDistance,
             },
           };
           break;
@@ -177,7 +177,7 @@ export default function Display() {
             ...newState[button],
             position: {
               ...newState[button].position,
-              y: newState[button].position.y + moveDistance, // Move down in viewport
+              y: newState[button].position.y + moveDistance,
             },
           };
           break;
@@ -186,7 +186,7 @@ export default function Display() {
             ...newState[button],
             position: {
               ...newState[button].position,
-              x: newState[button].position.x - moveDistance, // Move left in viewport
+              x: newState[button].position.x - moveDistance,
             },
           };
           break;
@@ -195,7 +195,7 @@ export default function Display() {
             ...newState[button],
             position: {
               ...newState[button].position,
-              x: newState[button].position.x + moveDistance, // Move right in viewport
+              x: newState[button].position.x + moveDistance,
             },
           };
           break;
